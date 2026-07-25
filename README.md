@@ -4,7 +4,7 @@
 
 Palash Agrawal, Shreeansh Bharadwaj, Valan Sebastian
 
-## What It Does
+# Project Overview
 
 This project is a local home-security prototype built around a Raspberry Pi Pico, a laptop webcam, and a browser dashboard.
 
@@ -35,6 +35,30 @@ The laptop runs `bridge.py`:
 - compares the detected person against the local people database
 - enables the buzzer only when the visitor is outside the saved database
 - serves the synced dashboard locally on `http://127.0.0.1:8000`
+
+# Functionality of each component
+
+LCD1602 Display: Top line should display the distance to the nearest human unrecognized by OpenCV, while the bottom line shows the alarm status (On/Off).
+
+TM1637 4-digit display: Shows the surrounding temperature in Celsius (may include a tilt switch to choose C or F).
+
+Ultrasonic Sensor (HC-SR04): Sends out high-frequency ultrasound waves to determine distance to the nearest obstacle and assists in detecting fast movement.
+
+PIR Motion Sensor: Senses changes in infrared background and converts them into electronic impulses to detect presence.
+
+DHT11 Temperature/Humidity Sensor: Uses a resistive element and internal microcontroller to calculate temperature and humidity; updates roughly once per second.
+
+# Wiring GPIO values
+
+- buzzer = 16
+- trig = 17
+- echo = 27
+- out = 21
+- dio = 14
+- clk = 15
+- data = 28
+- sda = 0
+- scl = 1
 
 ## Files
 
