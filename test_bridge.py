@@ -35,3 +35,26 @@ def test_save_person_image_writes_file(tmp_path):
     assert saved_path.exists()
     assert saved_path.parent.name == "Alice"
     assert saved_path.read_bytes() == image_bytes
+
+
+def test_detect_serial_ports_prefers_discovered_ports(monkeypatch):
+    class DummyListPorts:
+        def __init__(self, ports):
+            self._ports = ports
+
+        def comports(self):
+            return [type("Port", (), {"device": port})() for port in self._ports]
+
+    monkeypatch.setattr(bridge, "PICO_PORT", "COM4")
+    monkeypatch.setattr(bridge, "list_ports", DummyListPorts(["COM5"]))
+
+    ports = bridge.detect_serial_ports()
+
+    assert ports[0] == "COM5"
+    assert "COM4" not in ports[:1]
+
+
+def test_classify_serial_message_ignores_repl_noise():
+    assert bridge.classify_serial_message(">>>") == "repl_prompt"
+    assert bridge.classify_serial_message("NameError: name 'ALARM_ON' isn't defined") == "repl_error"
+    assert bridge.classify_serial_message('{"armed": true}') == "payload"

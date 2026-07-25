@@ -27,7 +27,7 @@ PEOPLE_DB = ROOT / "people_db"
 
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("BRIDGE_PORT", "8000"))
-PICO_PORT = os.environ.get("PICO_PORT", "COM4")
+PICO_PORT = os.environ.get("PICO_PORT") or os.environ.get("SERIAL_PORT") or "COM4"
 PICO_BAUD = int(os.environ.get("PICO_BAUD", "115200"))
 
 ALARM_UNKNOWN_THRESHOLD = 3
@@ -109,20 +109,36 @@ def detect_serial_ports():
     if preferred:
         preferred_ports.append(preferred)
 
-    for port in [PICO_PORT, "COM4", "COM3", "COM2", "COM1"]:
-        if port and port not in preferred_ports:
-            preferred_ports.append(port)
-
+    discovered = []
     if list_ports is not None:
         try:
             discovered = [port.device for port in list_ports.comports()]
         except Exception:
             discovered = []
-        for port in discovered:
-            if port and port not in preferred_ports:
-                preferred_ports.append(port)
+
+    for port in discovered:
+        if port and port not in preferred_ports:
+            preferred_ports.append(port)
+
+    for port in ["COM4", "COM3", "COM2", "COM1", "COM5", "COM6", "COM7", "COM8"]:
+        if port and port not in preferred_ports:
+            preferred_ports.append(port)
 
     return preferred_ports
+
+
+def classify_serial_message(line):
+    message = (line or "").strip()
+    if not message:
+        return "empty"
+    if message.startswith(">>>") or message.startswith("..."):
+        return "repl_prompt"
+    upper = message.upper()
+    if "NAMEERROR" in upper or "TRACEBACK" in upper or "SYNTAXERROR" in upper or "ERROR" in upper and "DEFINED" in upper:
+        return "repl_error"
+    if message.startswith("{") or message.startswith("["):
+        return "payload"
+    return "text"
 
 
 def save_person_image(person_name, image_bytes, root=None):
@@ -269,15 +285,30 @@ class AppState:
         self.last_serial_try = time.time()
 
         errors = []
-        for port in detect_serial_ports():
+        baud_rates = []
+        if PICO_PORT and PICO_PORT not in {"COM4", "COM3", "COM2", "COM1"}:
+            baud_rates.append(PICO_BAUD)
+        env_baud = os.environ.get("PICO_BAUD")
+        if env_baud:
             try:
-                self.serial = serial.Serial(port, PICO_BAUD, timeout=0.1)
-                self.append_log(f"Connected to Pico on {port}", "success")
-                self.update("pico", connected=True)
-                return self.serial
-            except Exception as exc:
-                errors.append(f"{port}: {exc}")
-                self.serial = None
+                baud_rates.append(int(env_baud))
+            except ValueError:
+                baud_rates = []
+        for baud in [115200, 9600, 57600, 38400]:
+            if baud not in baud_rates:
+                baud_rates.append(baud)
+
+        for port in detect_serial_ports():
+            for baud in baud_rates:
+                try:
+                    self.serial = serial.Serial(port, baud, timeout=0.1)
+                    self.serial.reset_input_buffer()
+                    self.append_log(f"Connected to Pico on {port} at {baud} baud", "success")
+                    self.update("pico", connected=True)
+                    return self.serial
+                except Exception as exc:
+                    errors.append(f"{port}@{baud}: {exc}")
+                    self.serial = None
 
         self.update("pico", connected=False)
         if errors:
@@ -746,7 +777,12 @@ def serial_loop():
             line = ser.readline().decode("utf-8", errors="ignore").strip()
             if not line:
                 continue
-            if line.startswith("{"):
+
+            classification = classify_serial_message(line)
+            if classification in {"empty", "repl_prompt", "repl_error"}:
+                continue
+
+            if classification == "payload" and line.startswith("{"):
                 try:
                     payload = json.loads(line)
                 except Exception:
