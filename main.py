@@ -270,14 +270,23 @@ def update_tm1637_temperature(temp_c):
 last_lcd = ("", "")
 
 
+def pad_text(text, width):
+    if text is None:
+        text = ""
+    text = str(text)
+    if len(text) >= width:
+        return text[:width]
+    return text + (" " * (width - len(text)))
+
+
 def update_lcd(line1, line2):
     global last_lcd
 
     if lcd is None:
         return
 
-    text1 = line1[:LCD_COLS].ljust(LCD_COLS)
-    text2 = line2[:LCD_COLS].ljust(LCD_COLS)
+    text1 = pad_text(line1, LCD_COLS)
+    text2 = pad_text(line2, LCD_COLS)
 
     if last_lcd == (text1, text2):
         return
