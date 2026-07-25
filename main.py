@@ -1,5 +1,20 @@
-from machine import ADC, I2C, Pin, PWM, time_pulse_us
+from machine import I2C, Pin, PWM, time_pulse_us
+import dht
+import sys
 import time
+
+try:
+    import ujson as json
+except ImportError:
+    import json
+
+try:
+    import uselect as select
+except ImportError:
+    try:
+        import select  # type: ignore
+    except ImportError:
+        select = None
 
 """
 Pico security firmware for the final hardware build in the photo.
@@ -7,12 +22,14 @@ Pico security firmware for the final hardware build in the photo.
 Primary hardware:
 - PIR motion sensor for human presence
 - HC-SR04 ultrasonic sensor for proximity / motion confirmation
+- DHT11 temperature / humidity sensor
 - I2C 16x2 LCD for distance and alarm state
 - buzzer and status LED for the alarm
 - arm/disarm button
 
 Optional hardware:
 - TM1637 4-digit display for temperature
+- tilt switch for Celsius/Fahrenheit selection
 
 If your wiring differs, change the pin constants at the top.
 """
@@ -28,9 +45,10 @@ ULTRASONIC_ECHO_PIN = 27
 PIR_PIN = 21
 HUMAN_TRIGGER_PIN = PIR_PIN  # Alias kept for compatibility with earlier code
 
+DHT11_PIN = 28
+
 TM1637_DIO_PIN = 14
 TM1637_CLK_PIN = 15
-TM1637_DATA_PIN = 28  # Kept as an alias in case your 4-digit module labels it as DATA
 
 STATUS_LED_PIN = 25
 ARM_BUTTON_PIN = 20
@@ -40,6 +58,10 @@ I2C_SCL_PIN = 1
 LCD_ROWS = 2
 LCD_COLS = 16
 LCD_ADDR_CANDIDATES = (0x27, 0x3F)
+
+# Optional tilt switch input. Leave as None unless you wire one.
+TEMP_UNIT_SWITCH_PIN = None
+TEMP_UNIT_SWITCH_ACTIVE_HIGH = True
 
 
 # -----------------------------
@@ -84,6 +106,9 @@ except ImportError:
 # -----------------------------
 pir_in = Pin(PIR_PIN, Pin.IN, Pin.PULL_DOWN)
 button_in = Pin(ARM_BUTTON_PIN, Pin.IN, Pin.PULL_UP)
+temp_unit_switch = None
+if TEMP_UNIT_SWITCH_PIN is not None:
+    temp_unit_switch = Pin(TEMP_UNIT_SWITCH_PIN, Pin.IN, Pin.PULL_DOWN)
 
 status_led = Pin(STATUS_LED_PIN, Pin.OUT)
 buzzer = PWM(Pin(BUZZER_PIN))
@@ -93,7 +118,7 @@ ultrasonic_trig = Pin(ULTRASONIC_TRIG_PIN, Pin.OUT)
 ultrasonic_echo = Pin(ULTRASONIC_ECHO_PIN, Pin.IN)
 ultrasonic_trig.value(0)
 
-temp_sensor = ADC(4)
+dht_sensor = dht.DHT11(Pin(DHT11_PIN))
 
 tm_display = None
 if tm1637 is not None:
@@ -177,21 +202,59 @@ def read_distance_cm():
         return None
 
 
-def read_temperature_c():
-    reading = temp_sensor.read_u16() * (3.3 / 65535)
-    return 27 - (reading - 0.706) / 0.001721
+def read_environment():
+    try:
+        dht_sensor.measure()
+        temperature_c = float(dht_sensor.temperature())
+        humidity = float(dht_sensor.humidity())
+        temperature_samples.append(temperature_c)
+        humidity_samples.append(humidity)
+        if len(temperature_samples) > 5:
+            temperature_samples.pop(0)
+        if len(humidity_samples) > 5:
+            humidity_samples.pop(0)
+        return average(temperature_samples), average(humidity_samples)
+    except Exception:
+        return average(temperature_samples), average(humidity_samples)
+
+
+def average(samples):
+    if not samples:
+        return None
+    return sum(samples) / len(samples)
+
+
+def get_temperature_unit():
+    if temp_unit_override in ("C", "F"):
+        return temp_unit_override
+
+    if temp_unit_switch is None:
+        return "C"
+
+    value = temp_unit_switch.value()
+    if TEMP_UNIT_SWITCH_ACTIVE_HIGH:
+        return "F" if value == 1 else "C"
+    return "F" if value == 0 else "C"
 
 
 def update_tm1637_temperature(temp_c):
     if tm_display is None:
         return
 
-    value = int(round(temp_c))
+    if temp_c is None:
+        try:
+            tm_display.show("    ")
+        except Exception:
+            pass
+        return
+
+    unit = get_temperature_unit()
+    value = int(round(temp_c * 9 / 5 + 32)) if unit == "F" else int(round(temp_c))
     try:
-        tm_display.number(value)
+        tm_display.show("{:>3}{}".format(value, unit))
     except Exception:
         try:
-            tm_display.show(str(value).rjust(4)[:4])
+            tm_display.number(value)
         except Exception:
             pass
 
@@ -229,11 +292,13 @@ def format_distance(distance_cm):
 
 
 def set_armed(value):
-    global armed, alarm_active, led_state, alarm_until
+    global armed, alarm_active, led_state, alarm_until, remote_alarm_active, alarm_reason_text
 
     armed = value
     if not armed:
         alarm_active = False
+        remote_alarm_active = False
+        alarm_reason_text = "idle"
         led_state = False
         alarm_until = 0
         outputs_off()
@@ -243,15 +308,86 @@ def set_armed(value):
 
 
 def start_alarm(reason, distance_cm, temp_c):
-    global alarm_active, alarm_until
+    global alarm_active, alarm_until, alarm_reason_text
 
     alarm_active = True
     alarm_until = time.ticks_add(time.ticks_ms(), ALARM_DURATION_MS)
+    alarm_reason_text = reason
     print("ALARM:", reason)
     if distance_cm is not None:
         print("Distance: {:.1f} cm".format(distance_cm))
     if temp_c is not None:
         print("Temperature: {:.1f} C".format(temp_c))
+    if last_humidity is not None:
+        print("Humidity: {:.0f}%".format(last_humidity))
+
+
+def init_serial_input():
+    global serial_poll, serial_stdin
+
+    if select is None:
+        return
+
+    try:
+        serial_stdin = sys.stdin
+        serial_poll = select.poll()
+        serial_poll.register(serial_stdin, select.POLLIN)
+    except Exception:
+        serial_poll = None
+        serial_stdin = None
+
+
+def read_serial_commands():
+    global remote_alarm_active, temp_unit_override
+
+    if serial_poll is None or serial_stdin is None:
+        return
+
+    try:
+        while serial_poll.poll(0):
+            line = serial_stdin.readline()
+            if not line:
+                return
+
+            cmd = line.strip().upper()
+            if not cmd:
+                continue
+
+            if cmd in ("ALARM_ON", "ALARM 1", "ALARM=1"):
+                remote_alarm_active = True
+                print("Remote alarm enabled")
+            elif cmd in ("ALARM_OFF", "ALARM 0", "ALARM=0"):
+                remote_alarm_active = False
+                print("Remote alarm cleared")
+            elif cmd.startswith("UNIT "):
+                unit = cmd.split(" ", 1)[1].strip()[:1]
+                temp_unit_override = unit if unit in ("C", "F") else None
+            elif cmd == "UNIT_C":
+                temp_unit_override = "C"
+            elif cmd == "UNIT_F":
+                temp_unit_override = "F"
+    except Exception:
+        pass
+
+
+def publish_status(now, distance_cm, temperature_c, humidity, pir_recent, sonar_motion):
+    payload = {
+        "armed": armed,
+        "alarm": alarm_active,
+        "remote_alarm": remote_alarm_active,
+        "alarm_reason": alarm_reason_text,
+        "distance_cm": distance_cm,
+        "temperature_c": temperature_c,
+        "humidity": humidity,
+        "pir": pir_recent,
+        "sonar": sonar_motion,
+        "display_unit": get_temperature_unit(),
+        "uptime_ms": now,
+    }
+    try:
+        print(json.dumps(payload))
+    except Exception:
+        pass
 
 
 # -----------------------------
@@ -261,10 +397,18 @@ armed = True
 alarm_active = False
 alarm_until = 0
 led_state = False
+remote_alarm_active = False
+temp_unit_override = None
+serial_poll = None
+serial_stdin = None
+alarm_reason_text = "idle"
 
 pir_latched_until = 0
 last_distance_cm = None
 last_temperature_c = None
+last_humidity = None
+temperature_samples = []
+humidity_samples = []
 stable_near_reads = 0
 
 last_button_raw = is_button_pressed()
@@ -274,16 +418,22 @@ button_latched = False
 last_flash = 0
 last_display_update = 0
 last_temp_update = 0
+boot_started_ms = time.ticks_ms()
 
 
 print("Pico security system booted")
 print("Hardware profile: PIR + ultrasonic + LCD")
 outputs_off()
 update_lcd("SYSTEM ARMED", "PIR + SONAR READY")
+init_serial_input()
+
+last_status_publish = 0
 
 
 while True:
     now = time.ticks_ms()
+
+    read_serial_commands()
 
     # Button debounce for arm/disarm.
     button_raw = is_button_pressed()
@@ -319,16 +469,28 @@ while True:
 
     if time.ticks_diff(now, last_temp_update) >= TEMP_UPDATE_MS:
         last_temp_update = now
-        last_temperature_c = read_temperature_c()
-        update_tm1637_temperature(last_temperature_c)
+        last_temperature_c, last_humidity = read_environment()
+        if last_temperature_c is not None:
+            update_tm1637_temperature(last_temperature_c)
+            print(
+                "DHT11: {:.1f} C, {:.0f}% RH".format(
+                    last_temperature_c,
+                    last_humidity if last_humidity is not None else 0,
+                )
+            )
 
     # Trigger policy: PIR presence plus ultrasonic confirmation.
-    boot_ready = time.ticks_diff(now, 0) >= BOOT_GRACE_MS
-    intrusion_confirmed = boot_ready and pir_recent and sonar_motion
-    if armed and intrusion_confirmed:
-        if not alarm_active:
+    boot_ready = time.ticks_diff(now, boot_started_ms) >= BOOT_GRACE_MS
+    local_intrusion = boot_ready and pir_recent and sonar_motion
+    alarm_should_be_on = armed and (remote_alarm_active or local_intrusion)
+    if alarm_should_be_on and not alarm_active:
+        if remote_alarm_active and not local_intrusion:
+            start_alarm("remote unknown person", distance_cm, last_temperature_c)
+        else:
             start_alarm("pir + ultrasonic", distance_cm, last_temperature_c)
-        alarm_active = True
+
+    alarm_active = alarm_should_be_on
+    if alarm_active:
         alarm_until = time.ticks_add(now, ALARM_DURATION_MS)
 
     # Alarm outputs.
@@ -346,6 +508,8 @@ while True:
             print("Alarm finished")
             alarm_active = False
             led_state = False
+            remote_alarm_active = False
+            alarm_reason_text = "idle"
             outputs_off()
     else:
         outputs_off()
@@ -355,15 +519,12 @@ while True:
         last_display_update = now
 
         line1 = format_distance(distance_cm)
-        if not armed:
-            line2 = "SYSTEM DISARMED"
-        elif alarm_active:
-            line2 = "ALARM ACTIVE"
-        elif pir_recent:
-            line2 = "MOTION DETECTED"
-        else:
-            line2 = "SYSTEM ARMED"
+        line2 = "ALARM: ON" if alarm_active else "ALARM: OFF"
 
         update_lcd(line1, line2)
+
+    if time.ticks_diff(now, last_status_publish) >= 1000:
+        last_status_publish = now
+        publish_status(now, distance_cm, last_temperature_c, last_humidity, pir_recent, sonar_motion)
 
     time.sleep_ms(20)

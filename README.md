@@ -4,20 +4,95 @@
 
 Palash Agrawal, Shreeansh Bharadwaj, Valan Sebastian
 
-# Project Overview
+## What It Does
 
-Imagine that you have to leave your house for a long period of time (for example, 1-2 weeks) for a vacation or some event. Mabye one thing that you are worried about is the security of your home, that someone might break in. So, what if you did not have to worry about that, and instead you had a system that protects your home? Our project uses a thermal camera to detect unwanted human prescense. Not only will it sound an alarm and flash LEDs, it can also send a text message to your phone letting you know of the detection. The system also includes multiple other layers of detection including motion sensing.
+This project is a local home-security prototype built around a Raspberry Pi Pico, a laptop webcam, and a browser dashboard.
 
-# How it works
-We used a raspberry pi pico and connected to it a 4-digit display, an ultrasonic sensor, and an LCD display. The pi will connect to a laptop camera and extract multiple frames from the feed. For each frame, the code uses OpenCV to detect humans, and the ultrasonic sensor detects fast movement. If both of these are detected, it triggers an alarm. The LCD display shows how far the person is and whether the alarm is on or off. The 4-digit display shows the temperature of the environment it is in. These parts help create a multipurpose security system.
+The system uses:
 
-# Wiring GPIO values
-- buzzer = 16
-- trig = 17
-- echo = 27
-- out = 21
-- dio = 14
-- clk = 15
-- data = 28
-- sda = 0
-- scl = 1
+- `PIR` motion sensing for human presence
+- `HC-SR04` ultrasonic sensing for distance confirmation
+- `DHT11` for room temperature and humidity
+- `LCD1602` for distance and alarm status
+- `TM1637` 4-digit display for temperature
+- OpenCV on the laptop for tracking and identity matching
+- a people database to decide whether a visitor is known or unknown
+- a buzzer and LED alarm for unknown or suspicious activity
+
+## How It Works
+
+The Pico handles the physical sensors and displays:
+
+- The LCD shows the nearest distance on the top line.
+- The second LCD line shows whether the alarm is `ON` or `OFF`.
+- The TM1637 display shows the room temperature.
+- The DHT11 temperature and humidity readings are averaged before they are sent to the dashboard.
+
+The laptop runs `bridge.py`:
+
+- reads Pico sensor data over USB serial
+- uses OpenCV to track the person in the laptop camera
+- compares the detected person against the local people database
+- enables the buzzer only when the visitor is outside the saved database
+- serves the synced dashboard locally on `http://127.0.0.1:8000`
+
+## Files
+
+- [`main.py`](./main.py) - MicroPython firmware for the Pico
+- [`bridge.py`](./bridge.py) - local OpenCV + serial bridge and HTTP server
+- [`web/`](./web) - Svelte dashboard source
+- [`requirements.txt`](./requirements.txt) - Python packages for the bridge
+
+## People Database
+
+Create a folder named `people_db/` in the repo root.
+
+For each known person, add a subfolder with their name and several face images:
+
+```text
+people_db/
+  Alice/
+    1.jpg
+    2.jpg
+  Bob/
+    1.jpg
+    2.jpg
+```
+
+The bridge trains the local OpenCV face recognizer from those images.
+
+## Running Locally
+
+1. Flash `main.py` to the Pico.
+2. Install the Python bridge dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+3. Build the web dashboard:
+
+```bash
+cd web
+npm install
+npm run build
+```
+
+4. Start the bridge server from the repo root:
+
+```bash
+python bridge.py
+```
+
+5. Open the dashboard at:
+
+```text
+http://127.0.0.1:8000
+```
+
+## Notes
+
+- OpenCV runs on the laptop, not on the Pico.
+- The dashboard is local only and stays on `127.0.0.1`.
+- The buzzer is driven only when the tracked person is unknown or when the Pico raises a local alarm.
+- If the face recognizer is unavailable, the bridge still tracks the camera feed and will treat visitors as unknown.

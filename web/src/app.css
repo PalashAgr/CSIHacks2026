@@ -210,8 +210,49 @@ button {
   color: var(--muted);
 }
 
+.capture-box {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.capture-box input[type="text"],
+.capture-box input[type="file"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.75rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+.capture-label {
+  color: var(--accent);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.capture-preview {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+}
+
+.capture-status {
+  color: var(--muted);
+  margin: 0;
+}
+
 .status-card strong {
   font-size: 1.55rem;
+}
+
+.status-card strong.danger {
+  color: var(--danger);
 }
 
 .status-card small {
@@ -302,6 +343,29 @@ button {
   aspect-ratio: 16 / 9;
   object-fit: cover;
   filter: saturate(1.1) contrast(1.06);
+}
+
+.camera-feed {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  filter: saturate(1.08) contrast(1.03);
+}
+
+.frame-placeholder {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 20px;
+  color: var(--muted);
+}
+
+.frame-placeholder strong {
+  color: var(--text);
+  font-size: 1.1rem;
 }
 
 .hidden-canvas {
@@ -450,6 +514,35 @@ button {
   margin: 0;
   color: var(--muted);
   line-height: 1.6;
+}
+
+.db-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.db-card {
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  display: grid;
+  gap: 6px;
+}
+
+.db-card strong {
+  font-size: 1rem;
+}
+
+.db-card span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.db-card.empty {
+  grid-column: 1 / -1;
 }
 
 .bottom-grid {
