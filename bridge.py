@@ -357,34 +357,43 @@ def open_tracker(frame, bbox):
 
 
 def open_camera(index=0):
-    candidates = [index]
-    if os.name == "nt":
-        candidates.extend([1, 2, 3, 4])
+    candidate_indexes = [index, 0, 1, 2, 3]
+    backends = []
+    if hasattr(cv2, "CAP_DSHOW"):
+        backends.append((cv2.CAP_DSHOW, "dshow"))
+    if hasattr(cv2, "CAP_MSMF"):
+        backends.append((cv2.CAP_MSMF, "msmf"))
+    backends.append((cv2.CAP_ANY, "any"))
 
-    for candidate in candidates:
-        capture = cv2.VideoCapture(candidate)
-        if capture is None or not capture.isOpened():
-            continue
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        capture.set(cv2.CAP_PROP_FPS, TARGET_FPS)
-        ok, _ = capture.read()
-        if ok:
-            return capture, candidate
-        capture.release()
+    for backend, backend_name in backends:
+        for candidate in candidate_indexes:
+            try:
+                capture = cv2.VideoCapture(candidate, backend)
+            except Exception:
+                continue
+            if capture is None or not capture.isOpened():
+                continue
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            capture.set(cv2.CAP_PROP_FPS, TARGET_FPS)
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            ok, frame = capture.read()
+            if ok and frame is not None:
+                return capture, candidate, backend_name
+            capture.release()
 
-    return None, None
+    return None, None, None
 
 
 def camera_loop():
-    capture, camera_index = open_camera()
+    capture, camera_index, camera_backend = open_camera(int(os.environ.get("CAMERA_INDEX", "0")))
     if capture is None:
         STATE.append_log("Camera unavailable", "warn")
-        STATE.update("vision", connected=False)
+        STATE.update("vision", connected=False, camera_index=None, camera_backend=None)
         return
 
-    STATE.update("vision", connected=True, camera_index=camera_index)
-    STATE.append_log(f"OpenCV camera connected on index {camera_index}", "success")
+    STATE.update("vision", connected=True, camera_index=camera_index, camera_backend=camera_backend)
+    STATE.append_log(f"OpenCV camera connected on index {camera_index} via {camera_backend}", "success")
 
     tracker = None
     tracker_bbox = None
@@ -398,13 +407,13 @@ def camera_loop():
         ok, frame = capture.read()
         if not ok or frame is None:
             capture.release()
-            capture, camera_index = open_camera(camera_index + 1 if camera_index is not None else 0)
+            capture, camera_index, camera_backend = open_camera(camera_index + 1 if camera_index is not None else 0)
             if capture is None:
                 STATE.append_log("Camera stream lost", "warn")
-                STATE.update("vision", connected=False)
+                STATE.update("vision", connected=False, camera_index=None, camera_backend=None)
                 time.sleep(0.5)
                 continue
-            STATE.update("vision", connected=True, camera_index=camera_index)
+            STATE.update("vision", connected=True, camera_index=camera_index, camera_backend=camera_backend)
             continue
 
         frame_index += 1
