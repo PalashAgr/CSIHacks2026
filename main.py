@@ -176,6 +176,14 @@ def outputs_off():
     led_off()
 
 
+def emit(message):
+    try:
+        print(message)
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+
 def is_pir_triggered():
     value = pir_in.value()
     return value == 1 if PIR_ACTIVE_HIGH else value == 0
@@ -302,9 +310,9 @@ def set_armed(value):
         led_state = False
         alarm_until = 0
         outputs_off()
-        print("System disarmed")
+        emit("System disarmed")
     else:
-        print("System armed")
+        emit("System armed")
 
 
 def start_alarm(reason, distance_cm, temp_c):
@@ -313,13 +321,13 @@ def start_alarm(reason, distance_cm, temp_c):
     alarm_active = True
     alarm_until = time.ticks_add(time.ticks_ms(), ALARM_DURATION_MS)
     alarm_reason_text = reason
-    print("ALARM:", reason)
+    emit("ALARM: {}".format(reason))
     if distance_cm is not None:
-        print("Distance: {:.1f} cm".format(distance_cm))
+        emit("Distance: {:.1f} cm".format(distance_cm))
     if temp_c is not None:
-        print("Temperature: {:.1f} C".format(temp_c))
+        emit("Temperature: {:.1f} C".format(temp_c))
     if last_humidity is not None:
-        print("Humidity: {:.0f}%".format(last_humidity))
+        emit("Humidity: {:.0f}%".format(last_humidity))
 
 
 def init_serial_input():
@@ -385,7 +393,7 @@ def publish_status(now, distance_cm, temperature_c, humidity, pir_recent, sonar_
         "uptime_ms": now,
     }
     try:
-        print(json.dumps(payload))
+        emit(json.dumps(payload))
     except Exception:
         pass
 
@@ -421,8 +429,8 @@ last_temp_update = 0
 boot_started_ms = time.ticks_ms()
 
 
-print("Pico security system booted")
-print("Hardware profile: PIR + ultrasonic + LCD")
+emit("Pico security system booted")
+emit("Hardware profile: PIR + ultrasonic + LCD")
 outputs_off()
 update_lcd("SYSTEM ARMED", "PIR + SONAR READY")
 init_serial_input()
@@ -472,7 +480,7 @@ while True:
         last_temperature_c, last_humidity = read_environment()
         if last_temperature_c is not None:
             update_tm1637_temperature(last_temperature_c)
-            print(
+            emit(
                 "DHT11: {:.1f} C, {:.0f}% RH".format(
                     last_temperature_c,
                     last_humidity if last_humidity is not None else 0,
@@ -505,7 +513,7 @@ while True:
                 else:
                     buzzer_off()
         else:
-            print("Alarm finished")
+            emit("Alarm finished")
             alarm_active = False
             led_state = False
             remote_alarm_active = False

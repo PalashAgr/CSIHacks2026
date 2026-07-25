@@ -15,6 +15,11 @@ import cv2
 import numpy as np
 import serial
 
+try:
+    from serial.tools import list_ports
+except Exception:  # pragma: no cover - optional dependency fallback
+    list_ports = None
+
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIST = ROOT / "web" / "dist"
@@ -96,6 +101,28 @@ def clamp(value, lower, upper):
 
 def ensure_people_db():
     PEOPLE_DB.mkdir(exist_ok=True)
+
+
+def detect_serial_ports():
+    preferred_ports = []
+    preferred = os.environ.get("PICO_PORT") or os.environ.get("SERIAL_PORT")
+    if preferred:
+        preferred_ports.append(preferred)
+
+    for port in [PICO_PORT, "COM4", "COM3", "COM2", "COM1"]:
+        if port and port not in preferred_ports:
+            preferred_ports.append(port)
+
+    if list_ports is not None:
+        try:
+            discovered = [port.device for port in list_ports.comports()]
+        except Exception:
+            discovered = []
+        for port in discovered:
+            if port and port not in preferred_ports:
+                preferred_ports.append(port)
+
+    return preferred_ports
 
 
 def save_person_image(person_name, image_bytes, root=None):
@@ -240,16 +267,24 @@ class AppState:
         if time.time() - self.last_serial_try < 2:
             return None
         self.last_serial_try = time.time()
-        try:
-            self.serial = serial.Serial(PICO_PORT, PICO_BAUD, timeout=0.1)
-            self.append_log(f"Connected to Pico on {PICO_PORT}", "success")
-            self.update("pico", connected=True)
-            return self.serial
-        except Exception as exc:
-            self.update("pico", connected=False)
-            self.append_log(f"Pico serial unavailable: {exc}", "warn")
-            self.serial = None
-            return None
+
+        errors = []
+        for port in detect_serial_ports():
+            try:
+                self.serial = serial.Serial(port, PICO_BAUD, timeout=0.1)
+                self.append_log(f"Connected to Pico on {port}", "success")
+                self.update("pico", connected=True)
+                return self.serial
+            except Exception as exc:
+                errors.append(f"{port}: {exc}")
+                self.serial = None
+
+        self.update("pico", connected=False)
+        if errors:
+            self.append_log(f"Pico serial unavailable. Tried: {' | '.join(errors)}", "warn")
+        else:
+            self.append_log("Pico serial unavailable. No compatible serial ports found.", "warn")
+        return None
 
     def write_serial(self, line):
         ser = self.connect_serial()
@@ -441,19 +476,28 @@ def camera_loop():
                 tracked = tracker is not None
         else:
             x, y, w, h = bbox
-            gray = cv2.cvtColor(frame[y : y + h, x : x + w], cv2.COLOR_BGR2GRAY)
-            if gray.size > 0:
-                faces = FACE_CASCADE.detectMultiScale(gray, 1.1, 4, minSize=(40, 40)) if FACE_CASCADE is not None and not FACE_CASCADE.empty() else []
-                if len(faces) > 0:
-                    fx, fy, fw, fh = max(faces, key=lambda box: box[2] * box[3])
-                    face = gray[fy : fy + fh, fx : fx + fw]
-                    face = cv2.resize(face, (200, 200))
-                    person_name, confidence = recognize_face(face)
-                elif STATE.recognizer is not None:
-                    face = cv2.resize(gray, (200, 200))
-                    person_name, confidence = recognize_face(face)
+            if x < 0 or y < 0 or x + w > frame.shape[1] or y + h > frame.shape[0]:
+                bbox = None
+                person_name = "No person"
+            else:
+                crop = frame[y : y + h, x : x + w]
+                if crop.size == 0:
+                    bbox = None
+                    person_name = "No person"
                 else:
-                    person_name = "Unknown"
+                    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+                    if gray.size > 0:
+                        faces = FACE_CASCADE.detectMultiScale(gray, 1.1, 4, minSize=(40, 40)) if FACE_CASCADE is not None and not FACE_CASCADE.empty() else []
+                        if len(faces) > 0:
+                            fx, fy, fw, fh = max(faces, key=lambda box: box[2] * box[3])
+                            face = gray[fy : fy + fh, fx : fx + fw]
+                            face = cv2.resize(face, (200, 200))
+                            person_name, confidence = recognize_face(face)
+                        elif STATE.recognizer is not None:
+                            face = cv2.resize(gray, (200, 200))
+                            person_name, confidence = recognize_face(face)
+                        else:
+                            person_name = "Unknown"
 
         if person_name not in (None, "Unknown", "No person"):
             known = confidence is not None and confidence < FACE_RECOGNITION_THRESHOLD
