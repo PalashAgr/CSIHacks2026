@@ -21,24 +21,25 @@ If your wiring differs, change the pin constants at the top.
 # -----------------------------
 # Pin mapping
 # -----------------------------
-PIR_PIN = 15
+BUZZER_PIN = 16
+ULTRASONIC_TRIG_PIN = 17
+ULTRASONIC_ECHO_PIN = 27
+
+PIR_PIN = 21
 HUMAN_TRIGGER_PIN = PIR_PIN  # Alias kept for compatibility with earlier code
 
-ULTRASONIC_TRIG_PIN = 2
-ULTRASONIC_ECHO_PIN = 3
+TM1637_DIO_PIN = 14
+TM1637_CLK_PIN = 15
+TM1637_DATA_PIN = 28  # Kept as an alias in case your 4-digit module labels it as DATA
 
-BUZZER_PIN = 16
 STATUS_LED_PIN = 25
-ARM_BUTTON_PIN = 14
+ARM_BUTTON_PIN = 20
 
 I2C_SDA_PIN = 0
 I2C_SCL_PIN = 1
 LCD_ROWS = 2
 LCD_COLS = 16
 LCD_ADDR_CANDIDATES = (0x27, 0x3F)
-
-TM1637_CLK_PIN = 4
-TM1637_DIO_PIN = 5
 
 
 # -----------------------------
@@ -50,12 +51,15 @@ DISPLAY_UPDATE_MS = 250
 TEMP_UPDATE_MS = 1_000
 DEBOUNCE_MS = 50
 
+BOOT_GRACE_MS = 8_000
+
 PIR_ACTIVE_HIGH = True
 BUTTON_ACTIVE_LOW = True
 
-DISTANCE_NEAR_CM = 120.0
+DISTANCE_NEAR_CM = 80.0
 DISTANCE_DELTA_CM = 15.0
 PIR_HOLD_MS = 1_250
+SONAR_STABLE_READS = 2
 
 BEEP_FREQ = 2_100
 BEEP_DUTY = 32_768
@@ -261,6 +265,7 @@ led_state = False
 pir_latched_until = 0
 last_distance_cm = None
 last_temperature_c = None
+stable_near_reads = 0
 
 last_button_raw = is_button_pressed()
 last_button_change = time.ticks_ms()
@@ -301,7 +306,13 @@ while True:
     sonar_motion = False
     if distance_cm is not None:
         if distance_cm <= DISTANCE_NEAR_CM:
+            stable_near_reads += 1
+        else:
+            stable_near_reads = 0
+
+        if stable_near_reads >= SONAR_STABLE_READS:
             sonar_motion = True
+
         if last_distance_cm is not None and abs(distance_cm - last_distance_cm) >= DISTANCE_DELTA_CM:
             sonar_motion = True
         last_distance_cm = distance_cm
@@ -312,7 +323,8 @@ while True:
         update_tm1637_temperature(last_temperature_c)
 
     # Trigger policy: PIR presence plus ultrasonic confirmation.
-    intrusion_confirmed = pir_recent and sonar_motion
+    boot_ready = time.ticks_diff(now, 0) >= BOOT_GRACE_MS
+    intrusion_confirmed = boot_ready and pir_recent and sonar_motion
     if armed and intrusion_confirmed:
         if not alarm_active:
             start_alarm("pir + ultrasonic", distance_cm, last_temperature_c)
