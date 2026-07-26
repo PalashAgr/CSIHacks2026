@@ -301,7 +301,7 @@ class AppState:
         for port in detect_serial_ports():
             for baud in baud_rates:
                 try:
-                    self.serial = serial.Serial(port, baud, timeout=0.1)
+                    self.serial = serial.Serial(port, baud, timeout=2.0)
                     self.serial.reset_input_buffer()
                     self.append_log(f"Connected to Pico on {port} at {baud} baud", "success")
                     self.update("pico", connected=True)
@@ -658,7 +658,9 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _send_bytes(self, body, content_type):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -785,7 +787,8 @@ def serial_loop():
             if classification == "payload" and line.startswith("{"):
                 try:
                     payload = json.loads(line)
-                except Exception:
+                except Exception as exc:
+                    STATE.append_log(f"JSON parse error: {exc} | Line: {line[:100]}", "warn")
                     continue
 
                 STATE.update(
@@ -801,6 +804,23 @@ def serial_loop():
                     display_unit=payload.get("display_unit", "C"),
                     last_seen=utc_now(),
                 )
+
+                temp_c = payload.get("temperature_c")
+                humidity = payload.get("humidity")
+                if temp_c is not None:
+                    STATE.temp_window.append(float(temp_c))
+                if humidity is not None:
+                    STATE.humidity_window.append(float(humidity))
+
+                avg_temp = safe_average(list(STATE.temp_window))
+                avg_humidity = safe_average(list(STATE.humidity_window))
+                if avg_temp is not None or avg_humidity is not None:
+                    STATE.update(
+                        "environment",
+                        room_temperature_c=avg_temp,
+                        room_humidity=avg_humidity,
+                        temperature_samples=len(STATE.temp_window),
+                    )
                 continue
 
             STATE.append_log(line, "info")

@@ -92,29 +92,33 @@ class I2cLcd:
 
     def _write(self, value):
         """Write raw byte to I2C"""
-        self.i2c.writeto(self.addr, bytes([value | self._backlightval]))
+        byte_value = (int(value) | int(self._backlightval)) & 0xFF
+        self.i2c.writeto(self.addr, bytes([byte_value]))
 
     def _strobe(self, data):
         """Clock enable bit"""
-        self._write(data | self.EN)
+        self._write((int(data) | self.EN) & 0xFF)
         time.sleep_us(1)
-        self._write(data & ~self.EN)
+        self._write((int(data) & ~self.EN) & 0xFF)
         time.sleep_us(50)
 
     def _write4bits(self, value):
         """Write 4 bits to LCD"""
+        value = int(value) & 0xFF
         self._write(value)
         self._strobe(value)
 
     def _command(self, cmd):
         """Send command to LCD"""
-        self._write4bits(cmd & 0xF0)
-        self._write4bits((cmd << 4) & 0xF0)
+        cmd_byte = int(cmd) & 0xFF
+        self._write4bits(cmd_byte & 0xF0)
+        self._write4bits((cmd_byte << 4) & 0xF0)
 
     def _data(self, data):
         """Send data to LCD"""
-        self._write4bits(data | self.RS)
-        self._write4bits((data << 4) | self.RS)
+        data_byte = int(data) & 0xFF
+        self._write4bits((data_byte & 0xF0) | self.RS)
+        self._write4bits(((data_byte << 4) & 0xF0) | self.RS)
 
     def clear(self):
         """Clear display and return cursor to home"""

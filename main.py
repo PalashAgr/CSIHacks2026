@@ -135,6 +135,7 @@ if I2C is not None and I2cLcd is not None:
         detected = None
         try:
             scan = i2c.scan()
+            emit("I2C scan: {}".format(scan))
             for candidate in LCD_ADDR_CANDIDATES:
                 if candidate in scan:
                     detected = candidate
@@ -145,6 +146,7 @@ if I2C is not None and I2cLcd is not None:
             detected = LCD_ADDR_CANDIDATES[0]
 
         if detected is not None:
+            emit("LCD address: 0x{:02X}".format(detected))
             lcd = I2cLcd(i2c, detected, LCD_ROWS, LCD_COLS)
     except Exception as exc:
         print("LCD init failed:", exc)
@@ -280,7 +282,7 @@ def pad_text(text, width):
 
 
 def update_lcd(line1, line2):
-    global last_lcd
+    global last_lcd, lcd
 
     if lcd is None:
         return
@@ -300,6 +302,8 @@ def update_lcd(line1, line2):
         last_lcd = (text1, text2)
     except Exception as exc:
         print("LCD update failed:", exc)
+        lcd = None
+        last_lcd = ("", "")
 
 
 def format_distance(distance_cm):
@@ -325,11 +329,12 @@ def set_armed(value):
 
 
 def start_alarm(reason, distance_cm, temp_c):
-    global alarm_active, alarm_until, alarm_reason_text
+    global alarm_active, alarm_until, alarm_reason_text, beep_count
 
     alarm_active = True
     alarm_until = time.ticks_add(time.ticks_ms(), ALARM_DURATION_MS)
     alarm_reason_text = reason
+    beep_count = 0  # Reset beep counter when alarm starts
     emit("ALARM: {}".format(reason))
     if distance_cm is not None:
         emit("Distance: {:.1f} cm".format(distance_cm))
@@ -410,7 +415,7 @@ def publish_status(now, distance_cm, temperature_c, humidity, pir_recent, sonar_
 # -----------------------------
 # State
 # -----------------------------
-armed = True
+armed = False
 alarm_active = False
 alarm_until = 0
 led_state = False
@@ -437,11 +442,17 @@ last_display_update = 0
 last_temp_update = 0
 boot_started_ms = time.ticks_ms()
 
+# Beep counter for limited alarm beeps
+beep_count = 0
+max_beeps = 4
+beep_interval_ms = 300
+last_beep_time = 0
+
 
 emit("Pico security system booted")
 emit("Hardware profile: PIR + ultrasonic + LCD")
 outputs_off()
-update_lcd("SYSTEM ARMED", "PIR + SONAR READY")
+update_lcd("SYSTEM DISARMED", "PRESS BUTTON TO ARM")
 init_serial_input()
 
 last_status_publish = 0
@@ -512,9 +523,10 @@ while True:
 
     # Alarm outputs.
     if armed and alarm_active:
-        if time.ticks_diff(alarm_until, now) > 0:
-            if time.ticks_diff(now, last_flash) >= FLASH_INTERVAL_MS:
-                last_flash = now
+        if beep_count < max_beeps:
+            if time.ticks_diff(now, last_beep_time) >= beep_interval_ms:
+                last_beep_time = now
+                beep_count += 1
                 led_state = not led_state
                 status_led.value(1 if led_state else 0)
                 if led_state:
@@ -527,6 +539,7 @@ while True:
             led_state = False
             remote_alarm_active = False
             alarm_reason_text = "idle"
+            beep_count = 0
             outputs_off()
     else:
         outputs_off()

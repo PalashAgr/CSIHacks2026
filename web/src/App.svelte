@@ -132,12 +132,12 @@
   }
 
   function roomTempText() {
-    const value = state?.environment?.room_temperature_c;
+    const value = state?.pico?.temperature_c;
     return value === null || value === undefined ? '-- C' : `${value.toFixed(1)} C`;
   }
 
   function roomHumidityText() {
-    const value = state?.environment?.room_humidity;
+    const value = state?.pico?.humidity;
     return value === null || value === undefined ? '-- %' : `${value.toFixed(0)} %`;
   }
 
