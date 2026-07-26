@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent
 WEB_DIST = ROOT / "web" / "dist"
 PEOPLE_DB = ROOT / "people_db"
 
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"
 PORT = int(os.environ.get("BRIDGE_PORT", "8000"))
 PICO_PORT = os.environ.get("PICO_PORT") or os.environ.get("SERIAL_PORT") or "COM4"
 PICO_BAUD = int(os.environ.get("PICO_BAUD", "115200"))
