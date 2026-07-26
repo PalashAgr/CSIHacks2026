@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent
 WEB_DIST = ROOT / "web" / "dist"
 PEOPLE_DB = ROOT / "people_db"
 
-HOST = "0.0.0.0"
+HOST = os.environ.get("BRIDGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BRIDGE_PORT", "8000"))
 PICO_PORT = os.environ.get("PICO_PORT") or os.environ.get("SERIAL_PORT") or "COM4"
 PICO_BAUD = int(os.environ.get("PICO_BAUD", "115200"))
@@ -693,6 +693,13 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         path = parsed.path
         if path == "/":
+            # Serve simple vanilla JS dashboard
+            simple_dashboard = Path(__file__).parent / "simple_dashboard.html"
+            if simple_dashboard.exists():
+                mime = "text/html"
+                data = simple_dashboard.read_bytes()
+                self._send_bytes(data, mime)
+                return
             path = "/index.html"
         target = (WEB_DIST / path.lstrip("/")).resolve()
         if not str(target).startswith(str(WEB_DIST.resolve())) or not target.exists() or target.is_dir():
@@ -784,7 +791,12 @@ def serial_loop():
             if classification in {"empty", "repl_prompt", "repl_error"}:
                 continue
 
-            if classification == "payload" and line.startswith("{"):
+            # Log all non-payload text for debugging
+            if classification != "payload":
+                STATE.append_log(f"Pico: {line[:50]}", "info")
+                continue
+
+            if line.startswith("{"):
                 try:
                     payload = json.loads(line)
                 except Exception as exc:

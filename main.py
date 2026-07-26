@@ -38,9 +38,9 @@ If your wiring differs, change the pin constants at the top.
 # -----------------------------
 # Pin mapping
 # -----------------------------
-BUZZER_PIN = 16
-ULTRASONIC_TRIG_PIN = 17
-ULTRASONIC_ECHO_PIN = 27
+BUZZER_PIN = 17
+ULTRASONIC_TRIG_PIN = 16
+ULTRASONIC_ECHO_PIN = 18
 
 PIR_PIN = 21
 HUMAN_TRIGGER_PIN = PIR_PIN  # Alias kept for compatibility with earlier code
@@ -102,6 +102,17 @@ except ImportError:
 
 
 # -----------------------------
+# Helpers
+# -----------------------------
+def emit(message):
+    try:
+        print(message)
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+
+# -----------------------------
 # Hardware setup
 # -----------------------------
 pir_in = Pin(PIR_PIN, Pin.IN, Pin.PULL_DOWN)
@@ -125,33 +136,12 @@ if tm1637 is not None:
     try:
         tm_display = tm1637.TM1637(Pin(TM1637_CLK_PIN), Pin(TM1637_DIO_PIN))
     except Exception as exc:
-        print("TM1637 init failed:", exc)
+        emit("TM1637 init failed: {}".format(exc))
         tm_display = None
 
 lcd = None
-if I2C is not None and I2cLcd is not None:
-    try:
-        i2c = I2C(0, sda=Pin(I2C_SDA_PIN), scl=Pin(I2C_SCL_PIN), freq=400_000)
-        detected = None
-        try:
-            scan = i2c.scan()
-            emit("I2C scan: {}".format(scan))
-            for candidate in LCD_ADDR_CANDIDATES:
-                if candidate in scan:
-                    detected = candidate
-                    break
-            if detected is None and scan:
-                detected = scan[0]
-        except Exception:
-            detected = LCD_ADDR_CANDIDATES[0]
-
-        if detected is not None:
-            emit("LCD address: 0x{:02X}".format(detected))
-            lcd = I2cLcd(i2c, detected, LCD_ROWS, LCD_COLS)
-    except Exception as exc:
-        print("LCD init failed:", exc)
-        lcd = None
-
+# LCD disabled due to persistent encoding errors
+# All sensor data available on web dashboard at http://127.0.0.1:8000
 
 # -----------------------------
 # Helpers
@@ -178,14 +168,6 @@ def outputs_off():
     led_off()
 
 
-def emit(message):
-    try:
-        print(message)
-        sys.stdout.flush()
-    except Exception:
-        pass
-
-
 def is_pir_triggered():
     value = pir_in.value()
     return value == 1 if PIR_ACTIVE_HIGH else value == 0
@@ -207,8 +189,12 @@ def read_distance_cm():
         pulse = time_pulse_us(ultrasonic_echo, 1, 30_000)
         if pulse < 0:
             return None
-        return pulse / 58.0
-    except Exception:
+        distance_cm = pulse / 58.0
+        if distance_cm > 400 or distance_cm < 2:  # Filter invalid readings
+            return None
+        return distance_cm
+    except Exception as exc:
+        emit("Distance sensor error: {}".format(exc))
         return None
 
 
@@ -270,19 +256,23 @@ def update_tm1637_temperature(temp_c):
 
 
 last_lcd = ("", "")
+last_lcd_update = 0
+LCD_UPDATE_INTERVAL_MS = 2000  # Only update LCD every 2 seconds
 
 
 def pad_text(text, width):
     if text is None:
         text = ""
     text = str(text)
+    # Filter to only ASCII characters to avoid LCD encoding issues
+    text = ''.join(c for c in text if ord(c) < 128)
     if len(text) >= width:
         return text[:width]
     return text + (" " * (width - len(text)))
 
 
 def update_lcd(line1, line2):
-    global last_lcd, lcd
+    global last_lcd, lcd, last_lcd_update
 
     if lcd is None:
         return
@@ -293,6 +283,11 @@ def update_lcd(line1, line2):
     if last_lcd == (text1, text2):
         return
 
+    # Only update LCD every 2 seconds to reduce errors
+    now = time.ticks_ms()
+    if time.ticks_diff(now, last_lcd_update) < LCD_UPDATE_INTERVAL_MS:
+        return
+
     try:
         lcd.clear()
         lcd.move_to(0, 0)
@@ -300,16 +295,18 @@ def update_lcd(line1, line2):
         lcd.move_to(0, 1)
         lcd.putstr(text2)
         last_lcd = (text1, text2)
+        last_lcd_update = now
     except Exception as exc:
-        print("LCD update failed:", exc)
-        lcd = None
-        last_lcd = ("", "")
+        emit("LCD update failed: {} | text1: {} | text2: {}".format(exc, repr(text1), repr(text2)))
+        # Don't disable LCD on error, just skip this update
+        last_lcd = (text1, text2)
+        last_lcd_update = now
 
 
 def format_distance(distance_cm):
     if distance_cm is None:
-        return "DIST --- CM"
-    return "DIST {:5.1f}CM".format(distance_cm)
+        return "NO DIST"
+    return "{:.0f} CM".format(distance_cm)
 
 
 def set_armed(value):
@@ -544,12 +541,12 @@ while True:
     else:
         outputs_off()
 
-    # LCD status.
+    # LCD status - show only distance data
     if time.ticks_diff(now, last_display_update) >= DISPLAY_UPDATE_MS:
         last_display_update = now
 
         line1 = format_distance(distance_cm)
-        line2 = "ALARM: ON" if alarm_active else "ALARM: OFF"
+        line2 = ""  # Empty second line for simplicity
 
         update_lcd(line1, line2)
 

@@ -58,6 +58,10 @@
   let captureInput;
   let capturePreview = '';
 
+  // Reactive derived values
+  $: picoData = state?.pico || {};
+  $: envData = state?.environment || {};
+
   const clamp = (value, lower, upper) => Math.max(lower, Math.min(upper, value));
 
   function pushAlarmAnimation(active) {
@@ -95,6 +99,7 @@
       }
 
       state = await response.json();
+      console.log('Full API response:', JSON.stringify(state, null, 2));
       error = '';
 
       if (state.frame_version !== lastFrameVersion) {
@@ -127,17 +132,22 @@
   }
 
   function distanceLabel() {
-    const value = state?.pico?.distance_cm;
+    const value = picoData?.distance_cm;
+    console.log('Distance value:', value, 'picoData:', picoData);
     return value === null || value === undefined ? '-- cm' : `${value.toFixed(1)} cm`;
   }
 
   function roomTempText() {
-    const value = state?.pico?.temperature_c;
+    // Try pico first, then environment section
+    const value = picoData?.temperature_c ?? envData?.room_temperature_c;
+    console.log('Temp value:', value, 'pico:', picoData?.temperature_c, 'env:', envData?.room_temperature_c);
     return value === null || value === undefined ? '-- C' : `${value.toFixed(1)} C`;
   }
 
   function roomHumidityText() {
-    const value = state?.pico?.humidity;
+    // Try pico first, then environment section
+    const value = picoData?.humidity ?? envData?.room_humidity;
+    console.log('Humidity value:', value, 'pico:', picoData?.humidity, 'env:', envData?.room_humidity);
     return value === null || value === undefined ? '-- %' : `${value.toFixed(0)} %`;
   }
 

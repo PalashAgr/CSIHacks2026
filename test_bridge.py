@@ -58,3 +58,14 @@ def test_classify_serial_message_ignores_repl_noise():
     assert bridge.classify_serial_message(">>>") == "repl_prompt"
     assert bridge.classify_serial_message("NameError: name 'ALARM_ON' isn't defined") == "repl_error"
     assert bridge.classify_serial_message('{"armed": true}') == "payload"
+
+
+def test_bridge_defaults_to_loopback_host(monkeypatch):
+    monkeypatch.delenv("BRIDGE_HOST", raising=False)
+    monkeypatch.delenv("BRIDGE_PORT", raising=False)
+
+    spec = importlib.util.spec_from_file_location("bridge_test_module", ROOT / "bridge.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.HOST == "127.0.0.1"
